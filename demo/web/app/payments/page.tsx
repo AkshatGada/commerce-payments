@@ -28,46 +28,44 @@ export default function PaymentsDemo() {
   };
 
   return (
-    <div className="grid gap-4">
-      <h2 className="text-2xl font-semibold">Payments Visual Demo</h2>
+    <div className="grid gap-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-3xl font-semibold tracking-tight">Payments Visual Demo</h2>
+      </div>
 
       {/* Graph */}
       <div className="card">
-        <b className="block mb-2">Graph</b>
+        <div className="flex items-center justify-between mb-3">
+          <b className="text-lg">Flow</b>
+        </div>
         <Graph animateKey={JSON.stringify(data?.txs || {})} />
       </div>
 
-      {/* State */}
-      <div className="card grid gap-2">
-        <b>State</b>
-        <div className="text-sm text-gray-600">Capturable and Refundable bars coming next.</div>
-      </div>
-
       {/* Controls */}
-      <div className="flex flex-wrap gap-2">
-        <button className="btn" disabled={loading} onClick={() => run('/api/charge')}>Charge (1-step)</button>
-        <button className="btn" disabled={loading} onClick={() => run('/api/authorize-capture')}>Authorize → Capture</button>
-        <button className="btn" disabled={loading} onClick={() => run('/api/refund')}>Refund</button>
-        <button className="btn" disabled={loading} onClick={() => run('/api/void')}>Void</button>
-        <button className="btn" disabled={loading} onClick={() => run('/api/reclaim')}>Reclaim</button>
+      <div className="card">
+        <div className="mb-3 font-semibold">Actions</div>
+        <div className="flex flex-wrap gap-3">
+          <button className="btn" disabled={loading} onClick={() => run('/api/charge')}>Charge (1-step)</button>
+          <button className="btn" disabled={loading} onClick={() => run('/api/authorize-capture')}>Authorize → Capture</button>
+          <button className="btn" disabled={loading} onClick={() => run('/api/refund')}>Refund</button>
+          <button className="btn" disabled={loading} onClick={() => run('/api/void')}>Void</button>
+          <button className="btn" disabled={loading} onClick={() => run('/api/reclaim')}>Reclaim</button>
+        </div>
+        {err && <div className="text-red-600 mt-3">{err}</div>}
       </div>
 
-      {err && <div className="text-red-600">{err}</div>}
-
-      {/* Balances */}
+      {/* Details */}
       {data && (
-        <div className="grid gap-3">
+        <div className="grid md:grid-cols-2 gap-4">
           <div className="card">
             <b>Balances</b>
             <pre className="bg-gray-50 p-2 rounded mt-2">
               {JSON.stringify({ before: data.balancesBefore, after: data.balancesAfter }, null, 2)}
             </pre>
           </div>
-
-          {/* Timeline */}
           <div className="card">
-            <b>Txs</b>
-            <ul className="list-disc ml-6 mt-2">
+            <b>Transactions</b>
+            <ul className="list-disc ml-6 mt-2 space-y-1">
               {data.txs.approveHash && <li>approve: <a className="text-primary underline" href={`${scan}${data.txs.approveHash}`} target="_blank">view</a></li>}
               {data.txs.preApproveHash && <li>preApprove: <a className="text-primary underline" href={`${scan}${data.txs.preApproveHash}`} target="_blank">view</a></li>}
               {data.txs.authorizeHash && <li>authorize: <a className="text-primary underline" href={`${scan}${data.txs.authorizeHash}`} target="_blank">view</a></li>}
@@ -78,9 +76,7 @@ export default function PaymentsDemo() {
               {data.txs.reclaimHash && <li>reclaim: <a className="text-primary underline" href={`${scan}${data.txs.reclaimHash}`} target="_blank">view</a></li>}
             </ul>
           </div>
-
-          {/* Addresses */}
-          <div className="card">
+          <div className="card md:col-span-2">
             <b>Addresses</b>
             <pre className="bg-gray-50 p-2 rounded mt-2">
               {JSON.stringify(data.addresses, null, 2)}
@@ -100,31 +96,24 @@ function Graph({ animateKey }: { animateKey: string }) {
     path.style.transition = 'stroke-dashoffset 650ms ease';
     const len = path.getTotalLength();
     path.style.strokeDasharray = `${len}`;
-    // reset
     path.style.strokeDashoffset = `${len}`;
-    // animate
-    requestAnimationFrame(() => {
-      path.style.strokeDashoffset = '0';
-    });
+    requestAnimationFrame(() => { path.style.strokeDashoffset = '0'; });
   }, [animateKey]);
 
   return (
-    <svg className="w-full h-48" viewBox="0 0 600 220">
-      {/* Nodes */}
-      <circle cx="80" cy="110" r="24" className="fill-white stroke-gray-300" />
-      <text x="80" y="115" textAnchor="middle" className="text-xs">Payer</text>
+    <svg className="w-full h-56" viewBox="0 0 700 240">
+      <circle cx="80" cy="120" r="28" className="fill-white stroke-gray-300" />
+      <text x="80" y="125" textAnchor="middle" className="text-xs">Payer</text>
 
-      <circle cx="260" cy="110" r="24" className="fill-white stroke-gray-300" />
-      <text x="260" y="115" textAnchor="middle" className="text-xs">TokenStore</text>
+      <circle cx="320" cy="120" r="28" className="fill-white stroke-gray-300" />
+      <text x="320" y="125" textAnchor="middle" className="text-xs">TokenStore</text>
 
-      <circle cx="440" cy="110" r="24" className="fill-white stroke-gray-300" />
-      <text x="440" y="115" textAnchor="middle" className="text-xs">Merchant</text>
+      <circle cx="560" cy="120" r="28" className="fill-white stroke-gray-300" />
+      <text x="560" y="125" textAnchor="middle" className="text-xs">Merchant</text>
 
-      {/* Flow path */}
-      <path ref={pathRef} d="M 104 110 L 236 110 L 416 110" stroke="#0ea5e9" strokeWidth="4" fill="none" />
-      {/* Moving dot */}
+      <path ref={pathRef} d="M 108 120 L 292 120 L 532 120" stroke="#0ea5e9" strokeWidth="5" fill="none" />
       <circle r="6" fill="#22c55e">
-        <animateMotion dur="0.65s" repeatCount="1" path="M 104 110 L 236 110 L 416 110" />
+        <animateMotion dur="0.65s" repeatCount="1" path="M 108 120 L 292 120 L 532 120" />
       </circle>
     </svg>
   );

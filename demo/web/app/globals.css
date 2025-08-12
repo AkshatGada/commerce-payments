@@ -1,11 +1,9 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 :root { color-scheme: light; }
 
 .btn {
-  @apply inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-white shadow transition-all duration-200 hover:opacity-90 active:scale-95;
+  @apply inline-flex items-center rounded-md bg-primary px-4 py-2 text-white shadow transition-all duration-200 hover:opacity-90 active:scale-95;
 }
 
 .card {
