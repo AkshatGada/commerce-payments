@@ -7,11 +7,11 @@ import { ERC20_ABI, ESCROW_ABI } from '@/lib/abi';
 export async function POST() {
   try {
     const env = process.env as Record<string, string>;
-    const { RPC_URL, OPERATOR_PRIVATE_KEY, RELAYER_PRIVATE_KEY, AUTH_CAPTURE_ESCROW, DEMO_TOKEN, MERCHANT, PAYER } = env;
+    const { RPC_URL, OPERATOR_PRIVATE_KEY, RELAYER_PRIVATE_KEY, AUTH_CAPTURE_ESCROW, PREAPPROVAL_COLLECTOR, DEMO_TOKEN, MERCHANT, PAYER } = env;
     if (!RPC_URL) throw new Error('Missing RPC_URL');
     const operatorPkRaw = (OPERATOR_PRIVATE_KEY || RELAYER_PRIVATE_KEY) as string | undefined;
     if (!operatorPkRaw) throw new Error('Missing OPERATOR_PRIVATE_KEY (or RELAYER_PRIVATE_KEY)');
-    if (!AUTH_CAPTURE_ESCROW || !DEMO_TOKEN || !MERCHANT || !PAYER) throw new Error('Missing required envs');
+    if (!AUTH_CAPTURE_ESCROW || !PREAPPROVAL_COLLECTOR || !DEMO_TOKEN || !MERCHANT || !PAYER) throw new Error('Missing required envs');
 
     const normalizePk = (pk: string): Hex => {
       const hex = pk.startsWith('0x') ? pk : `0x${pk}`;
@@ -25,6 +25,7 @@ export async function POST() {
 
     const token = getAddress(DEMO_TOKEN);
     const escrow = getAddress(AUTH_CAPTURE_ESCROW);
+    const preApprovalCollector = getAddress(PREAPPROVAL_COLLECTOR);
     const payer = getAddress(PAYER);
     const merchant = getAddress(MERCHANT);
     const amount = 10n ** 16n;
@@ -55,7 +56,7 @@ export async function POST() {
 
     const operatorNonceBase = await publicClient.getTransactionCount({ address: operatorAccount.address, blockTag: 'pending' });
 
-    const authorizeHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'authorize', args: [paymentInfo, amount, operatorAccount.address, '0x'], nonce: operatorNonceBase });
+    const authorizeHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'authorize', args: [paymentInfo, amount, preApprovalCollector, '0x'], nonce: operatorNonceBase });
     await publicClient.waitForTransactionReceipt({ hash: authorizeHash });
 
     const captureHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'capture', args: [paymentInfo, amount, 0, '0x0000000000000000000000000000000000000000'], nonce: operatorNonceBase + 1 });

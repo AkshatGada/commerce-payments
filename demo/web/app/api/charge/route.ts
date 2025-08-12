@@ -4,7 +4,7 @@ import { polygonAmoy } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { ERC20_ABI, PREAPPROVAL_ABI, ESCROW_ABI } from '@/lib/abi';
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
     const env = process.env as Record<string, string>;
     const { RPC_URL, OPERATOR_PRIVATE_KEY, RELAYER_PRIVATE_KEY, PAYER_PRIVATE_KEY, AUTH_CAPTURE_ESCROW, PREAPPROVAL_COLLECTOR, DEMO_TOKEN, MERCHANT } = env;
@@ -33,7 +33,23 @@ export async function POST() {
     const payer = payerAccount.address;
     const merchant = getAddress(MERCHANT);
 
-    const amount = 10n ** 16n;
+    // Default 0.01 with 18 decimals, but allow override via request body
+    let amount: bigint = 10n ** 16n;
+    try {
+      const body = await req.json().catch(() => ({}));
+      const amountUnits = body?.amountUnits as string | undefined;
+      const amountDec = body?.amountDec as string | undefined;
+      if (amountUnits) {
+        amount = BigInt(amountUnits);
+      } else if (amountDec) {
+        // parse decimal string with 18 decimals
+        const [w, f = ''] = amountDec.split('.');
+        const frac = (f + '0'.repeat(18)).slice(0, 18);
+        amount = BigInt(w || '0') * (10n ** 18n) + BigInt(frac || '0');
+      }
+    } catch {
+      // ignore body parse errors; keep default amount
+    }
 
     const now = Math.floor(Date.now() / 1000);
     const paymentInfo = {
@@ -65,7 +81,7 @@ export async function POST() {
     const chargeHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'charge', args: [paymentInfo, amount, preApprovalCollector, '0x', 0, '0x0000000000000000000000000000000000000000'], nonce: operatorNonceBase });
     await publicClient.waitForTransactionReceipt({ hash: chargeHash });
 
-    return NextResponse.json({ txs: { approveHash, preApproveHash, chargeHash } });
+    return NextResponse.json({ txs: { approveHash, preApproveHash, chargeHash }, amount: amount.toString() });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? 'charge failed' }, { status: 500 });
   }

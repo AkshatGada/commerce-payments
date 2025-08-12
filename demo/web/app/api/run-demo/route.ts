@@ -9,33 +9,47 @@ export async function POST() {
     const env = process.env as Record<string, string>;
     const {
       RPC_URL,
-      RELAYER_PRIVATE_KEY,
+      RELAYER_PRIVATE_KEY, // operator key (backward compatibility)
+      OPERATOR_PRIVATE_KEY, // preferred
+      PAYER_PRIVATE_KEY,    // payer key (required for separate operator/payer)
       AUTH_CAPTURE_ESCROW,
       PREAPPROVAL_COLLECTOR,
       DEMO_TOKEN,
-      PAYER,
+      PAYER,   // optional, will be validated against PAYER_PRIVATE_KEY if provided
       MERCHANT,
       PAYMENT_SALT,
     } = env;
 
     if (!RPC_URL) throw new Error('Missing RPC_URL');
-    if (!RELAYER_PRIVATE_KEY) throw new Error('Missing RELAYER_PRIVATE_KEY');
+    const operatorPkRaw = (OPERATOR_PRIVATE_KEY || RELAYER_PRIVATE_KEY) as string | undefined;
+    if (!operatorPkRaw) throw new Error('Missing OPERATOR_PRIVATE_KEY (or RELAYER_PRIVATE_KEY)');
+    if (!PAYER_PRIVATE_KEY) throw new Error('Missing PAYER_PRIVATE_KEY');
     if (!AUTH_CAPTURE_ESCROW || !PREAPPROVAL_COLLECTOR || !DEMO_TOKEN || !MERCHANT) {
       throw new Error('Missing one of AUTH_CAPTURE_ESCROW, PREAPPROVAL_COLLECTOR, DEMO_TOKEN, MERCHANT');
     }
 
-    const account = privateKeyToAccount(RELAYER_PRIVATE_KEY as Hex);
-    if (PAYER && getAddress(PAYER) !== account.address) {
-      throw new Error('RELAYER must equal PAYER for this basic demo');
+    const normalizePk = (pk: string): Hex => {
+      const hex = pk.startsWith('0x') ? pk : `0x${pk}`;
+      if (hex.length !== 66) throw new Error('Invalid private key length');
+      return hex as Hex;
+    };
+
+    const operatorAccount = privateKeyToAccount(normalizePk(operatorPkRaw));
+    const payerAccount = privateKeyToAccount(normalizePk(PAYER_PRIVATE_KEY));
+
+    if (PAYER && getAddress(PAYER) !== payerAccount.address) {
+      throw new Error('PAYER env does not match PAYER_PRIVATE_KEY address');
     }
 
     const publicClient = createPublicClient({ chain: polygonAmoy, transport: http(RPC_URL) });
-    const walletClient = createWalletClient({ chain: polygonAmoy, transport: http(RPC_URL), account });
+    const operatorWallet = createWalletClient({ chain: polygonAmoy, transport: http(RPC_URL), account: operatorAccount });
+    const payerWallet = createWalletClient({ chain: polygonAmoy, transport: http(RPC_URL), account: payerAccount });
 
     const token = getAddress(DEMO_TOKEN);
     const escrow = getAddress(AUTH_CAPTURE_ESCROW);
     const preApprovalCollector = getAddress(PREAPPROVAL_COLLECTOR);
-    const payer = account.address;
+    const operator = operatorAccount.address;
+    const payer = payerAccount.address;
     const merchant = getAddress(MERCHANT);
 
     const amount = 10n ** 16n; // 0.01 (18 decimals)
@@ -52,7 +66,7 @@ export async function POST() {
     ]);
 
     const paymentInfo = {
-      operator: payer,
+      operator,
       payer,
       receiver: merchant,
       token,
@@ -70,7 +84,7 @@ export async function POST() {
       address: escrow,
       abi: ESCROW_ABI,
       functionName: 'getTokenStore',
-      args: [payer],
+      args: [operator],
     });
 
     const balancesBefore = {
@@ -79,37 +93,49 @@ export async function POST() {
       tokenStore: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [tokenStore] })) as bigint,
     };
 
-    // 1) approve
-    const approveHash = await walletClient.writeContract({
+    // Get nonces (pending)
+    const payerNonceBase = BigInt(await publicClient.getTransactionCount({ address: payer, blockTag: 'pending' }));
+    const operatorNonceBase = BigInt(await publicClient.getTransactionCount({ address: operator, blockTag: 'pending' }));
+
+    // 1) approve (payer)
+    const approveHash = await payerWallet.writeContract({
       address: token,
       abi: ERC20_ABI,
       functionName: 'approve',
       args: [preApprovalCollector, amount],
+      nonce: Number(payerNonceBase),
     });
+    await publicClient.waitForTransactionReceipt({ hash: approveHash });
 
-    // 2) preApprove
-    const preApproveHash = await walletClient.writeContract({
+    // 2) preApprove (payer)
+    const preApproveHash = await payerWallet.writeContract({
       address: preApprovalCollector,
       abi: PREAPPROVAL_ABI,
       functionName: 'preApprove',
       args: [paymentInfo],
+      nonce: Number(payerNonceBase + 1n),
     });
+    await publicClient.waitForTransactionReceipt({ hash: preApproveHash });
 
-    // 3) authorize
-    const authorizeHash = await walletClient.writeContract({
+    // 3) authorize (operator)
+    const authorizeHash = await operatorWallet.writeContract({
       address: escrow,
       abi: ESCROW_ABI,
       functionName: 'authorize',
       args: [paymentInfo, amount, preApprovalCollector, '0x'],
+      nonce: Number(operatorNonceBase),
     });
+    await publicClient.waitForTransactionReceipt({ hash: authorizeHash });
 
-    // 4) capture (fee=0)
-    const captureHash = await walletClient.writeContract({
+    // 4) capture (fee=0) (operator)
+    const captureHash = await operatorWallet.writeContract({
       address: escrow,
       abi: ESCROW_ABI,
       functionName: 'capture',
       args: [paymentInfo, amount, 0, '0x0000000000000000000000000000000000000000'],
+      nonce: Number(operatorNonceBase + 1n),
     });
+    await publicClient.waitForTransactionReceipt({ hash: captureHash });
 
     const balancesAfter = {
       payer: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [payer] })) as bigint,
@@ -120,7 +146,7 @@ export async function POST() {
     return NextResponse.json({
       chainId: polygonAmoy.id,
       token: { symbol, decimals },
-      addresses: { escrow, preApprovalCollector, token, payer, merchant, tokenStore },
+      addresses: { escrow, preApprovalCollector, token, operator, payer, merchant, tokenStore },
       txs: { approveHash, preApproveHash, authorizeHash, captureHash },
       balancesBefore,
       balancesAfter,
