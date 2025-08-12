@@ -2,6 +2,28 @@
 
 A modern operator-facing dashboard demonstrating the Commerce Payments Protocol on Polygon Amoy. It visualizes the full payment lifecycle and lets you operate flows like refunds and disputes.
 
+## Why this demo exists
+Traditional ecommerce needs flows that onchain P2P transfers don’t provide by default: delayed settlement, guaranteed payment, cancellations, partial refunds, and disputes. This demo shows how the protocol brings those capabilities onchain and how an operator can safely run them at scale.
+
+What it proves
+- Payment lifecycle for commerce: `authorize → capture` (delayed settlement) and `charge` (instant settle), plus `refund`, `void`, and `reclaim` safety valves
+- Trust-minimized operator model: the operator advances state but cannot arbitrarily move funds; all movement is cryptographically bound to `PaymentInfo`
+- Payer and merchant protections:
+  - Escrow-backed guarantees for merchants during auth/capture
+  - Time windows (`preApprovalExpiry`, `authorizationExpiry`, `refundExpiry`) and payer-initiated `reclaim` after auth expiry
+- Liquidity segmentation: per-operator `TokenStore` isolates escrowed funds to reduce blast radius
+- Modular token collection: collectors abstract ERC-20 spending methods (PreApproval in-demo; Permit2/3009 compatible by design)
+- Fees with guardrails: min/max bps and optional dynamic `feeReceiver`
+- Event-sourced status: statuses are derived from onchain events within a recent block window
+
+Commerce aspects covered here
+- Authorize-and-capture pattern used widely by merchants (inventory, partial fulfillment, tax/reconciliation)
+- Refunds (full/partial) with deadlines, dispute-driven approvals
+- Disputes workflow (offchain demo store of evidence/status) to mirror real ops
+- Operator operational view: KPIs, expiries, refundable totals, TokenStore balance
+
+> This demo runs on Polygon Amoy and uses an in-memory disputes store. It’s intended for evaluation and BD demos, not production custody.
+
 ## What’s inside
 - Next.js (App Router) + TypeScript + Tailwind
 - viem for onchain reads/writes
@@ -61,3 +83,29 @@ curl -X POST http://localhost:3000/api/authorize-capture
 - Disputes are stored in-memory for the demo (non-persistent).
 - The dashboard reads logs from a recent blocks window (≈5k) for “real-time-ish” state.
 - Refunds default to operator-funded refunds via `OPERATOR_REFUND_COLLECTOR`. 
+
+## End-to-end flow (Charge → Refund)
+1) Create a payment (payer pre-approves, operator charges):
+```
+curl -X POST http://localhost:3000/api/charge -H 'content-type: application/json' -d '{"amountDec":"0.1"}'
+```
+You’ll get three tx hashes: `approve`, `preApprove`, `charge`.
+
+2) Open `/dashboard` → Payments: the new payment appears as `charged`. Click it to see `PaymentInfo`, `State`, and the timeline (with PolygonScan links).
+
+3) Refund from the Refunds tab (UI): choose the row and click `Full Refund` or use `Partial Refund` to input an amount.
+
+Or programmatically (if you prefer curl):
+- Get payment detail by salt/hash:
+```
+curl http://localhost:3000/api/dashboard/payments/[salt-or-hash]
+```
+- Post a refund with `paymentInfo` and `amount` (units):
+```
+curl -X POST http://localhost:3000/api/dashboard/refunds -H 'content-type: application/json' \
+  -d '{
+    "paymentInfo": { ...from detail response... },
+    "amount": "50000000000000000"  
+  }'
+```
+This refunds 0.05 (assuming 18 decimals). The dashboard updates KPIs and Refunds automatically on refresh. 
