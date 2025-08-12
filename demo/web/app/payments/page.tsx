@@ -47,7 +47,7 @@ export default function PaymentsDemo() {
 
       {/* Controls */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button disabled={loading} onClick={() => run('/api/run-demo')}>Scene: Charge (1-step)</button>
+        <button disabled={loading} onClick={() => run('/api/charge')}>Scene: Charge (1-step)</button>
         <button disabled={loading} onClick={() => run('/api/authorize-capture')}>Scene: Authorize → Capture</button>
         <button disabled>Refund (coming)</button>
         <button disabled>Void (coming)</button>
