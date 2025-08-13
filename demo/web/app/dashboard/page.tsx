@@ -88,8 +88,10 @@ type PaymentDetail = {
   timeline: { type: string; blockNumber: bigint; data: any; txHash?: string }[];
 };
 
+type OpsLog = { op: string; txHash: string; url: string; meta?: Record<string, any> };
+
 export default function Dashboard() {
-  const [tab, setTab] = useState<'payments' | 'refunds' | 'disputes'>('payments');
+  const [tab, setTab] = useState<'payments' | 'refunds' | 'disputes' | 'ops'>('payments');
 
   const [loading, setLoading] = useState(false);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
@@ -144,6 +146,12 @@ export default function Dashboard() {
   const [newDisputeHash, setNewDisputeHash] = useState('');
   const [newDisputeReason, setNewDisputeReason] = useState('');
   const [newDisputeNotes, setNewDisputeNotes] = useState('');
+
+  // Ops tab state
+  const [opsAmountDec, setOpsAmountDec] = useState('0.1');
+  const [opsPaymentInfo, setOpsPaymentInfo] = useState<any | null>(null);
+  const [opsLogs, setOpsLogs] = useState<OpsLog[]>([]);
+  const appendLog = (l: OpsLog) => setOpsLogs((prev) => [l, ...prev].slice(0, 50));
 
   useEffect(() => {
     (async () => {
@@ -223,6 +231,96 @@ export default function Dashboard() {
     }
   };
 
+  // Ops tab handlers
+  const opBuild = async () => {
+    try {
+      const res = await fetch('/api/payment/build', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'build failed');
+      setOpsPaymentInfo(json.paymentInfo);
+      toast.push({ kind: 'success', message: 'Built PaymentInfo' });
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+  };
+
+  const opCharge = async () => {
+    try {
+      const res = await fetch('/api/charge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amountDec: opsAmountDec }) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'charge failed');
+      appendLog({ op: 'approve', txHash: json.txs.approveHash, url: `${scanBase}/tx/${json.txs.approveHash}` });
+      appendLog({ op: 'preApprove', txHash: json.txs.preApproveHash, url: `${scanBase}/tx/${json.txs.preApproveHash}` });
+      appendLog({ op: 'charge', txHash: json.txs.chargeHash, url: `${scanBase}/tx/${json.txs.chargeHash}` });
+      toast.push({ kind: 'success', message: 'Charge complete' });
+      await refreshKpis();
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+  };
+
+  const opAuthorizeCapture = async () => {
+    try {
+      const res = await fetch('/api/authorize-capture', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'authorize-capture failed');
+      appendLog({ op: 'authorize', txHash: json.txs.authorizeHash, url: `${scanBase}/tx/${json.txs.authorizeHash}` });
+      appendLog({ op: 'capture', txHash: json.txs.captureHash, url: `${scanBase}/tx/${json.txs.captureHash}` });
+      toast.push({ kind: 'success', message: 'Authorize + Capture complete' });
+      await refreshKpis();
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+  };
+
+  const opRefund = async () => {
+    if (!opsPaymentInfo) return toast.push({ kind: 'error', message: 'Build or paste PaymentInfo first' });
+    try {
+      const decs = kpis?.operatorBalance?.decimals ?? 18;
+      const amt = toUnits(opsAmountDec || '0.01', decs);
+      const res = await fetch('/api/dashboard/refunds', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paymentInfo: opsPaymentInfo, amount: amt }) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'refund failed');
+      appendLog({ op: 'refund', txHash: json.txs.refundHash, url: `${scanBase}/tx/${json.txs.refundHash}` });
+      toast.push({ kind: 'success', message: 'Refund sent' });
+      await refreshKpis();
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+  };
+
+  const opVoid = async () => {
+    try {
+      const res = await fetch('/api/void', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'void failed');
+      appendLog({ op: 'void', txHash: json.txs.voidHash, url: `${scanBase}/tx/${json.txs.voidHash}` });
+      toast.push({ kind: 'success', message: 'Void complete' });
+      await refreshKpis();
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+  };
+
+  const opReclaim = async () => {
+    try {
+      const res = await fetch('/api/reclaim', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'reclaim failed');
+      appendLog({ op: 'reclaim', txHash: json.txs.reclaimHash, url: `${scanBase}/tx/${json.txs.reclaimHash}` });
+      toast.push({ kind: 'success', message: 'Reclaim complete' });
+      await refreshKpis();
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+  };
+
+  // Dispute handlers (re-added)
+  const openDisputeDetail = async (d: any) => {
+    try {
+      setSelectedDispute(d);
+      setDisputeDetail(null);
+      setDisputeLoading(true);
+      setNewStatus(d.status || 'open');
+      const res = await fetch(`/api/dashboard/payments/${d.paymentInfoHash}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to load payment context');
+      setDisputeDetail(json as PaymentDetail);
+      const decimals = kpis?.operatorBalance?.decimals ?? 18;
+      const refundable = json?.state?.refundableAmount || '0';
+      setApproveAmountDec(refundable === '0' ? '' : (Number(BigInt(refundable)) / Number(10n ** BigInt(decimals))).toString());
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+    finally { setDisputeLoading(false); }
+  };
+
   const createDispute = async () => {
     if (!detail?.paymentInfoHash) return;
     try {
@@ -239,71 +337,8 @@ export default function Dashboard() {
       setDisputeReason('');
       setDisputeNotes('');
       toast.push({ kind: 'success', message: 'Dispute created' });
-    } catch (e: any) {
-      toast.push({ kind: 'error', message: e.message });
-    } finally {
-      setCreatingDispute(false);
-    }
-  };
-
-  const createDisputeFromTab = async () => {
-    try {
-      const res = await fetch('/api/dashboard/disputes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paymentInfoHash: newDisputeHash, reason: newDisputeReason, notes: newDisputeNotes }) });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to create dispute');
-      setDisputes((prev) => [json.item, ...prev]);
-      setNewDisputeHash(''); setNewDisputeReason(''); setNewDisputeNotes('');
-      toast.push({ kind: 'success', message: 'Dispute created' });
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
-  };
-
-  // Refunds analytics (client-side)
-  const refundTotals = useMemo(() => {
-    try {
-      const total = refundables.reduce((acc, r) => acc + BigInt(r.remaining || '0'), 0n);
-      return { count: refundables.length, total: total.toString() };
-    } catch { return { count: refundables.length, total: '0' }; }
-  }, [refundables]);
-
-  const refundTrendBars = useMemo(() => {
-    const values = refundables.map((r) => BigInt(r.remaining || '0'));
-    if (values.length === 0) return [] as number[];
-    const max = values.reduce((a, b) => (a > b ? a : b), 0n);
-    return values.map((v) => {
-      if (max === 0n) return 0;
-      const pct = Number((v * 100n) / max);
-      return pct; // 0-100
-    });
-  }, [refundables]);
-
-  const topReasons = useMemo(() => {
-    const set = new Set<string>(refundables.map((r) => r.paymentInfoHash));
-    const counts: Record<string, number> = {};
-    for (const d of disputes) {
-      if (set.has(d.paymentInfoHash)) counts[d.reason] = (counts[d.reason] || 0) + 1;
-    }
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [refundables, disputes]);
-
-  const openDisputeDetail = async (d: any) => {
-    try {
-      setSelectedDispute(d);
-      setDisputeDetail(null);
-      setDisputeLoading(true);
-      setNewStatus(d.status || 'open');
-      const res = await fetch(`/api/dashboard/payments/${d.paymentInfoHash}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Failed to load payment context');
-      setDisputeDetail(json as PaymentDetail);
-      // Default refund amount (dec) to full refundable
-      const decs = kpis?.operatorBalance?.decimals ?? 18;
-      const refundable = json?.state?.refundableAmount || '0';
-      setApproveAmountDec(refundable === '0' ? '' : (Number(BigInt(refundable)) / Number(10n ** BigInt(decs))).toString());
-    } catch (e: any) {
-      toast.push({ kind: 'error', message: e.message });
-    } finally {
-      setDisputeLoading(false);
-    }
+    finally { setCreatingDispute(false); }
   };
 
   const addEvidence = async () => {
@@ -335,12 +370,11 @@ export default function Dashboard() {
     if (!disputeDetail?.paymentInfo) return;
     try {
       setApprovingRefund(true);
-      const decs = kpis?.operatorBalance?.decimals ?? 18;
-      const units = toUnits(approveAmountDec || '0', decs);
+      const decimals = kpis?.operatorBalance?.decimals ?? 18;
+      const units = toUnits(approveAmountDec || '0', decimals);
       if (units === '0') throw new Error('Amount must be greater than 0');
       await doRefundByInfo(disputeDetail.paymentInfo, units);
       await Promise.all([refreshRefundables(), refreshKpis()]);
-      // Refresh payment detail view
       const res = await fetch(`/api/dashboard/payments/${selectedDispute.paymentInfoHash}`);
       const json = await res.json();
       if (res.ok) setDisputeDetail(json as PaymentDetail);
@@ -351,6 +385,45 @@ export default function Dashboard() {
   const short = (a?: string) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '');
   const decs = kpis?.operatorBalance?.decimals ?? 18;
   const sym = kpis?.operatorBalance?.symbol ?? '';
+
+  const createDisputeFromTab = async () => {
+    try {
+      const res = await fetch('/api/dashboard/disputes', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paymentInfoHash: newDisputeHash, reason: newDisputeReason, notes: newDisputeNotes }) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to create dispute');
+      setDisputes((prev) => [json.item, ...prev]);
+      setNewDisputeHash(''); setNewDisputeReason(''); setNewDisputeNotes('');
+      toast.push({ kind: 'success', message: 'Dispute created' });
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+  };
+
+  // Refunds analytics (client-side)
+  const refundTotals = useMemo(() => {
+    try {
+      const total = refundables.reduce((acc, r) => acc + BigInt(r.remaining || '0'), 0n);
+      return { count: refundables.length, total: total.toString() };
+    } catch { return { count: refundables.length, total: '0' }; }
+  }, [refundables]);
+
+  const refundTrendBars = useMemo((): number[] => {
+    const values = refundables.map((r) => BigInt(r.remaining || '0'));
+    if (values.length === 0) return [] as number[];
+    const max = values.reduce((a, b) => (a > b ? a : b), 0n);
+    return values.map((v) => {
+      if (max === 0n) return 0;
+      const pct = Number((v * 100n) / max);
+      return pct; // 0-100
+    });
+  }, [refundables]);
+
+  const topReasons = useMemo((): [string, number][] => {
+    const set = new Set<string>(refundables.map((r) => r.paymentInfoHash));
+    const counts: Record<string, number> = {};
+    for (const d of disputes) {
+      if (set.has(d.paymentInfoHash)) counts[d.reason] = (counts[d.reason] || 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5) as [string, number][];
+  }, [refundables, disputes]);
 
   return (
     <div className="grid gap-6">
@@ -394,6 +467,7 @@ export default function Dashboard() {
         <Button variant={tab === 'payments' ? 'primary' : 'subtle'} onClick={() => setTab('payments')}>Payments</Button>
         <Button variant={tab === 'refunds' ? 'primary' : 'subtle'} onClick={() => setTab('refunds')}>Refunds</Button>
         <Button variant={tab === 'disputes' ? 'primary' : 'subtle'} onClick={() => setTab('disputes')}>Disputes</Button>
+        <Button variant={tab === 'ops' ? 'primary' : 'subtle'} onClick={() => setTab('ops')}>Payment Ops</Button>
       </div>
 
       {tab === 'payments' && (
@@ -580,6 +654,81 @@ export default function Dashboard() {
               </table>
             )}
           </Card>
+        </div>
+      )}
+
+      {tab === 'ops' && (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid gap-4">
+            <Card>
+              <div className="font-semibold">Build Payment</div>
+              <div className="text-xs text-gray-600 mb-2">Creates a fresh PaymentInfo using env addresses and current time.</div>
+              <div className="flex gap-2">
+                <Button onClick={opBuild}>Build</Button>
+              </div>
+            </Card>
+            <Card>
+              <div className="font-semibold">Charge</div>
+              <div className="text-xs text-gray-600 mb-2">One-step authorize + capture. Amount (decimals: {decs})</div>
+              <div className="flex gap-2 items-center">
+                <input className="border rounded px-2 py-1 text-sm w-32" value={opsAmountDec} onChange={(e) => setOpsAmountDec(e.target.value)} />
+                <Button onClick={opCharge}>Run Charge</Button>
+              </div>
+            </Card>
+            <Card>
+              <div className="font-semibold">Authorize + Capture</div>
+              <div className="text-xs text-gray-600 mb-2">Runs two txs: authorize, then capture for the same amount.</div>
+              <Button onClick={opAuthorizeCapture}>Run Authorize + Capture</Button>
+            </Card>
+            <Card>
+              <div className="font-semibold">Refund</div>
+              <div className="text-xs text-gray-600 mb-2">Requires PaymentInfo. Amount (decimals: {decs})</div>
+              <div className="space-y-2">
+                <textarea className="border rounded px-2 py-1 text-xs w-full h-28" placeholder="Paste PaymentInfo JSON (optional if you used Build)" value={opsPaymentInfo ? JSON.stringify(opsPaymentInfo, null, 2) : ''} onChange={(e) => {
+                  try { const o = JSON.parse(e.target.value); setOpsPaymentInfo(o); } catch { /* noop */ }
+                }} />
+                <div className="flex gap-2 items-center">
+                  <input className="border rounded px-2 py-1 text-sm w-32" value={opsAmountDec} onChange={(e) => setOpsAmountDec(e.target.value)} />
+                  <Button onClick={opRefund}>Run Refund</Button>
+                </div>
+              </div>
+            </Card>
+            <Card>
+              <div className="font-semibold">Void</div>
+              <div className="text-xs text-gray-600 mb-2">Returns uncaptured funds to payer. Uses demo env PaymentInfo.</div>
+              <Button onClick={opVoid}>Run Void</Button>
+            </Card>
+            <Card>
+              <div className="font-semibold">Reclaim</div>
+              <div className="text-xs text-gray-600 mb-2">Payer-initiated void (after authorization expiry). Uses demo env PaymentInfo.</div>
+              <Button onClick={opReclaim}>Run Reclaim</Button>
+            </Card>
+          </div>
+
+          <div className="grid gap-4">
+            <Card variant="glass">
+              <div className="font-semibold mb-2">Results</div>
+              {opsLogs.length === 0 && <div className="text-sm text-gray-500">No operations yet</div>}
+              {opsLogs.length > 0 && (
+                <ul className="text-sm space-y-1">
+                  {opsLogs.map((l, i) => (
+                    <li key={i} className="flex items-center justify-between">
+                      <div>
+                        <b>{l.op}</b>: <span className="font-mono text-xs">{short(l.txHash)}</span>
+                      </div>
+                      <a className="text-[#4A90E2] underline" href={l.url} target="_blank" rel="noreferrer">view</a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+            {opsPaymentInfo && (
+              <Card variant="glass">
+                <div className="font-semibold mb-2">Current PaymentInfo</div>
+                <pre className="bg-gray-50 p-2 rounded text-xs overflow-auto">{JSON.stringify(opsPaymentInfo, null, 2)}</pre>
+              </Card>
+            )}
+          </div>
         </div>
       )}
 
