@@ -33,13 +33,14 @@ Commerce aspects covered here
   - `GET /api/dashboard/payments/[id]` — detail by `salt` or `paymentInfoHash`
   - `GET /api/dashboard/refunds`, `POST /api/dashboard/refunds` — refundables + refund
   - `GET /api/dashboard/disputes`, `POST /api/dashboard/disputes`, `PATCH /api/dashboard/disputes` — in-memory disputes store
-- Demo operation endpoints (for local seeding): `POST /api/charge`, `POST /api/authorize-capture`, `POST /api/refund`, `POST /api/void`, `POST /api/reclaim`, `POST /api/payment/build`
+  - Payment operations (used by the Payment Ops tab): `POST /api/charge`, `POST /api/authorize-capture`, `POST /api/refund`, `POST /api/void`, `POST /api/reclaim`, `POST /api/payment/build`
 
 ## Key features
 - Payments board with filters and per-payment detail (timeline + state)
 - Refunds management (full/partial), analytics sidebar, countdowns
 - Disputes list + detail (evidence, status, approve refund)
 - KPI header: Live Payments, Refundable Now, Active Disputes, Operator Balance
+- NEW: Payment Ops tab — build, charge, authorize+capture, refund, void, reclaim with tx links
 
 ## Setup
 1) Env file: `demo/web/.env.local`
@@ -63,15 +64,13 @@ npm run dev -p 3000
 ```
 Open `http://localhost:3000/dashboard`.
 
-## Seeding demo activity
-- Quick charge (default 0.01 token):
-```
-curl -X POST http://localhost:3000/api/charge -H 'content-type: application/json' -d '{"amountDec":"0.1"}'
-```
-- Authorize then capture (0.01 token):
-```
-curl -X POST http://localhost:3000/api/authorize-capture
-```
+## Try it (recommended)
+Use the Payment Ops tab (no curl needed):
+- Build Payment → Run Charge (approve + preApprove + charge)
+- Or run Authorize + Capture (2-step)
+- Refund (paste PaymentInfo from Build, or use one from an existing payment)
+- Void / Reclaim (demo flows using env PaymentInfo)
+The Results panel shows tx hashes with Polygonscan links, and the current PaymentInfo JSON for reuse.
 
 ## Architecture
 - UI: `demo/web/app/dashboard/page.tsx`
@@ -84,28 +83,30 @@ curl -X POST http://localhost:3000/api/authorize-capture
 - The dashboard reads logs from a recent blocks window (≈5k) for “real-time-ish” state.
 - Refunds default to operator-funded refunds via `OPERATOR_REFUND_COLLECTOR`. 
 
-## End-to-end flow (Charge → Refund)
-1) Create a payment (payer pre-approves, operator charges):
+## End-to-end flow (Charge → Refund) via the UI
+1) Open the Payment Ops tab → Run Charge (e.g., 0.1). You’ll see approve/preApprove/charge tx links.
+2) The new payment appears as `charged` in the Payments tab (detail → timeline/state).
+3) Refund from the Refunds tab (Full/Partial) or from Payment Ops (Refund section).
+
+## Advanced (curl) — optional
+- Quick charge:
 ```
 curl -X POST http://localhost:3000/api/charge -H 'content-type: application/json' -d '{"amountDec":"0.1"}'
 ```
-You’ll get three tx hashes: `approve`, `preApprove`, `charge`.
-
-2) Open `/dashboard` → Payments: the new payment appears as `charged`. Click it to see `PaymentInfo`, `State`, and the timeline (with PolygonScan links).
-
-3) Refund from the Refunds tab (UI): choose the row and click `Full Refund` or use `Partial Refund` to input an amount.
-
-Or programmatically (if you prefer curl):
+- Authorize then capture:
+```
+curl -X POST http://localhost:3000/api/authorize-capture
+```
 - Get payment detail by salt/hash:
 ```
 curl http://localhost:3000/api/dashboard/payments/[salt-or-hash]
 ```
-- Post a refund with `paymentInfo` and `amount` (units):
+- Refund with `paymentInfo` and `amount` (units):
 ```
 curl -X POST http://localhost:3000/api/dashboard/refunds -H 'content-type: application/json' \
   -d '{
     "paymentInfo": { ...from detail response... },
-    "amount": "50000000000000000"  
+    "amount": "50000000000000000"
   }'
 ```
-This refunds 0.05 (assuming 18 decimals). The dashboard updates KPIs and Refunds automatically on refresh. 
+This refunds 0.05 (assuming 18 decimals). Dashboard KPIs and Refunds update on refresh. 
