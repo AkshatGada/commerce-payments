@@ -72,17 +72,6 @@ Use the Payment Ops tab (no curl needed):
 - Void / Reclaim (demo flows using env PaymentInfo)
 The Results panel shows tx hashes with Polygonscan links, and the current PaymentInfo JSON for reuse.
 
-## Architecture
-- UI: `demo/web/app/dashboard/page.tsx`
-- UI primitives: `demo/web/components/ui/*`
-- ABIs & events: `demo/web/lib/abi.ts`
-- Docs: `demo/docs/*` (Basics, Technical, Flows)
-
-## Notes
-- Disputes are stored in-memory for the demo (non-persistent).
-- The dashboard reads logs from a recent blocks window (≈5k) for “real-time-ish” state.
-- Refunds default to operator-funded refunds via `OPERATOR_REFUND_COLLECTOR`. 
-
 ## End-to-end flow (Charge → Refund) via the UI
 1) Open the Payment Ops tab → Run Charge (e.g., 0.1). You’ll see approve/preApprove/charge tx links.
 2) The new payment appears as `charged` in the Payments tab (detail → timeline/state).
@@ -110,3 +99,8 @@ curl -X POST http://localhost:3000/api/dashboard/refunds -H 'content-type: appli
   }'
 ```
 This refunds 0.05 (assuming 18 decimals). Dashboard KPIs and Refunds update on refresh. 
+
+## Notes
+- Disputes are stored in-memory for the demo (non-persistent).
+- The dashboard reads logs from a recent blocks window (≈5k) for “real-time-ish” state.
+- Refunds default to operator-funded refunds via `OPERATOR_REFUND_COLLECTOR`. 
