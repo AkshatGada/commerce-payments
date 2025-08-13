@@ -28,7 +28,10 @@ export async function POST() {
     const preApprovalCollector = getAddress(PREAPPROVAL_COLLECTOR);
     const payer = getAddress(PAYER);
     const merchant = getAddress(MERCHANT);
-    const amount = 10n ** 16n;
+
+    // Use 0.01 with token decimals
+    const decimals = await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'decimals' }) as number;
+    const amount = (10n ** BigInt(decimals)) / 100n;
 
     const now = Math.floor(Date.now() / 1000);
     const paymentInfo = {

@@ -84,18 +84,23 @@ export async function GET(req: Request) {
     const disputesStore = getDisputesStore();
     const activeDisputes = disputesStore.disputes?.filter((d: any) => d.status !== 'resolved').length || 0;
 
-    // Operator TokenStore balance (if operator and token provided)
-    let operatorBalance: { tokenStore: string; token: string; balance: string; symbol?: string; decimals?: number } | null = null;
-    if (OPERATOR && DEMO_TOKEN) {
+    // Operator native POL balance (show gas runway)
+    let operatorBalance: { kind: 'native'; operator: string; balance: string; symbol: string; decimals: number } | null = null;
+    if (OPERATOR) {
       const operator = getAddress(OPERATOR);
+      const bal = await publicClient.getBalance({ address: operator });
+      operatorBalance = { kind: 'native', operator, balance: bal.toString(), symbol: 'POL', decimals: 18 };
+    }
+
+    // Token metadata for formatting live/refundable values (pull from DEMO_TOKEN when provided)
+    let tokenMeta: { token?: string; symbol?: string; decimals?: number } = {};
+    if (DEMO_TOKEN) {
       const token = getAddress(DEMO_TOKEN);
-      const tokenStore = await publicClient.readContract({ address: escrow, abi: ESCROW_ABI, functionName: 'getTokenStore', args: [operator] }) as `0x${string}`;
-      const [balance, symbol, decimals] = await Promise.all([
-        publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [tokenStore] }) as Promise<bigint>,
+      const [symbol, decimals] = await Promise.all([
         publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'symbol' }) as Promise<string>,
         publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'decimals' }) as Promise<number>,
       ]);
-      operatorBalance = { tokenStore, token, balance: balance.toString(), symbol, decimals };
+      tokenMeta = { token, symbol, decimals };
     }
 
     const payload = {
@@ -104,6 +109,7 @@ export async function GET(req: Request) {
       refundableNow: refundableNow.toString(),
       activeDisputes,
       operatorBalance,
+      tokenMeta,
       minSalt: minSalt.toString(),
     };
 

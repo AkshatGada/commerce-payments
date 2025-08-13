@@ -270,7 +270,7 @@ export default function Dashboard() {
   const opRefund = async () => {
     if (!opsPaymentInfo) return toast.push({ kind: 'error', message: 'Build or paste PaymentInfo first' });
     try {
-      const decs = kpis?.operatorBalance?.decimals ?? 18;
+      const decs = kpis?.tokenMeta?.decimals ?? 18;
       const amt = toUnits(opsAmountDec || '0.01', decs);
       const res = await fetch('/api/dashboard/refunds', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paymentInfo: opsPaymentInfo, amount: amt }) });
       const json = await res.json();
@@ -314,7 +314,7 @@ export default function Dashboard() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to load payment context');
       setDisputeDetail(json as PaymentDetail);
-      const decimals = kpis?.operatorBalance?.decimals ?? 18;
+      const decimals = kpis?.tokenMeta?.decimals ?? 18;
       const refundable = json?.state?.refundableAmount || '0';
       setApproveAmountDec(refundable === '0' ? '' : (Number(BigInt(refundable)) / Number(10n ** BigInt(decimals))).toString());
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
@@ -370,7 +370,7 @@ export default function Dashboard() {
     if (!disputeDetail?.paymentInfo) return;
     try {
       setApprovingRefund(true);
-      const decimals = kpis?.operatorBalance?.decimals ?? 18;
+      const decimals = kpis?.tokenMeta?.decimals ?? 18;
       const units = toUnits(approveAmountDec || '0', decimals);
       if (units === '0') throw new Error('Amount must be greater than 0');
       await doRefundByInfo(disputeDetail.paymentInfo, units);
@@ -383,8 +383,8 @@ export default function Dashboard() {
   };
 
   const short = (a?: string) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '');
-  const decs = kpis?.operatorBalance?.decimals ?? 18;
-  const sym = kpis?.operatorBalance?.symbol ?? '';
+  const decs = kpis?.tokenMeta?.decimals ?? 18;
+  const sym = kpis?.tokenMeta?.symbol ?? '';
 
   const createDisputeFromTab = async () => {
     try {

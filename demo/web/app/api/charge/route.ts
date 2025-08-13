@@ -33,8 +33,12 @@ export async function POST(req: Request) {
     const payer = payerAccount.address;
     const merchant = getAddress(MERCHANT);
 
-    // Default 0.01 with 18 decimals, but allow override via request body
-    let amount: bigint = 10n ** 16n;
+    // Resolve token decimals for correct amount parsing
+    const decimals = await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'decimals' }) as number;
+
+    // Default 0.01 using token decimals, but allow override via request body
+    const one = 10n ** BigInt(decimals);
+    let amount: bigint = one / 100n; // 0.01
     try {
       const body = await req.json().catch(() => ({}));
       const amountUnits = body?.amountUnits as string | undefined;
@@ -42,10 +46,10 @@ export async function POST(req: Request) {
       if (amountUnits) {
         amount = BigInt(amountUnits);
       } else if (amountDec) {
-        // parse decimal string with 18 decimals
+        // parse decimal string using token decimals
         const [w, f = ''] = amountDec.split('.');
-        const frac = (f + '0'.repeat(18)).slice(0, 18);
-        amount = BigInt(w || '0') * (10n ** 18n) + BigInt(frac || '0');
+        const frac = (f + '0'.repeat(decimals)).slice(0, decimals);
+        amount = BigInt(w || '0') * one + BigInt(frac || '0');
       }
     } catch {
       // ignore body parse errors; keep default amount
