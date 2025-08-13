@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createPublicClient, http, getAddress } from 'viem';
 import { polygonAmoy } from 'viem/chains';
 import { ESCROW_ABI, ESCROW_EVENTS, ERC20_ABI } from '@/lib/abi';
+import { getSessionMinSalt } from '@/lib/session';
 
 // Pull disputes from in-memory store used by disputes endpoint
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -12,8 +13,12 @@ const getDisputesStore = (): { disputes: any[] } => (globalThis as any).__DISPUT
 let __CACHE__: { at: number; payload: any } | null = null;
 const TTL_MS = 3000;
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const url = new URL(req.url);
+    const minSaltParam = url.searchParams.get('minSalt');
+    const minSalt = minSaltParam ? BigInt(minSaltParam) : getSessionMinSalt();
+
     const now = Date.now();
     if (__CACHE__ && now - __CACHE__.at < TTL_MS) {
       return NextResponse.json(__CACHE__.payload);
@@ -38,18 +43,37 @@ export async function GET() {
       publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[3], fromBlock, toBlock }), // PaymentRefunded
     ]);
 
-    // Live payments: total volume and count in window (captured + charged)
+    const includeBySalt = (s: any) => {
+      try { return BigInt(String(s)) >= minSalt; } catch { return false; }
+    };
+
+    // Live payments: total volume and count in window (captured + charged) filtered by session salt
     let liveVolume = 0n;
     const paymentSet = new Set<string>();
-    for (const l of captured as any[]) { liveVolume += BigInt(l.args.amount); paymentSet.add((l.args.paymentInfoHash as string).toLowerCase()); }
-    for (const l of charged as any[]) { liveVolume += BigInt(l.args.amount); paymentSet.add((l.args.paymentInfoHash as string).toLowerCase()); }
+    for (const l of captured as any[]) {
+      if (!includeBySalt((l as any).args?.paymentInfo?.salt)) continue;
+      liveVolume += BigInt(l.args.amount);
+      paymentSet.add((l.args.paymentInfoHash as string).toLowerCase());
+    }
+    for (const l of charged as any[]) {
+      if (!includeBySalt((l as any).args?.paymentInfo?.salt)) continue;
+      liveVolume += BigInt(l.args.amount);
+      paymentSet.add((l.args.paymentInfoHash as string).toLowerCase());
+    }
     const liveCount = paymentSet.size;
 
-    // Refundable now: sum(captured) - sum(refunded)
+    // Refundable now: sum(captured) - sum(refunded) for current session
     const capMap = new Map<string, bigint>();
-    for (const l of captured as any[]) { const k = (l.args.paymentInfoHash as string).toLowerCase(); capMap.set(k, (capMap.get(k) || 0n) + BigInt(l.args.amount)); }
+    for (const l of captured as any[]) {
+      if (!includeBySalt((l as any).args?.paymentInfo?.salt)) continue;
+      const k = (l.args.paymentInfoHash as string).toLowerCase();
+      capMap.set(k, (capMap.get(k) || 0n) + BigInt(l.args.amount));
+    }
     const refMap = new Map<string, bigint>();
-    for (const l of refunded as any[]) { const k = (l.args.paymentInfoHash as string).toLowerCase(); refMap.set(k, (refMap.get(k) || 0n) + BigInt(l.args.amount)); }
+    for (const l of refunded as any[]) {
+      const k = (l.args.paymentInfoHash as string).toLowerCase();
+      refMap.set(k, (refMap.get(k) || 0n) + BigInt(l.args.amount));
+    }
     let refundableNow = 0n;
     for (const [k, cap] of capMap.entries()) {
       const ref = refMap.get(k) || 0n;
@@ -80,6 +104,7 @@ export async function GET() {
       refundableNow: refundableNow.toString(),
       activeDisputes,
       operatorBalance,
+      minSalt: minSalt.toString(),
     };
 
     __CACHE__ = { at: now, payload };

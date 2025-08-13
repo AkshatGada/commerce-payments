@@ -2,13 +2,18 @@ import { NextResponse } from 'next/server';
 import { createPublicClient, http, getAddress } from 'viem';
 import { polygonAmoy } from 'viem/chains';
 import { ESCROW_ABI, ESCROW_EVENTS } from '@/lib/abi';
+import { getSessionMinSalt } from '@/lib/session';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let __CACHE__: { at: number; payload: any } | null = null;
 const TTL_MS = 3000;
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const url = new URL(req.url);
+    const minSaltParam = url.searchParams.get('minSalt');
+    const minSalt = minSaltParam ? BigInt(minSaltParam) : getSessionMinSalt();
+
     const now = Date.now();
     if (__CACHE__ && now - __CACHE__.at < TTL_MS) return NextResponse.json(__CACHE__.payload);
 
@@ -21,19 +26,17 @@ export async function GET() {
     const publicClient = createPublicClient({ chain: polygonAmoy, transport: http(RPC_URL) });
     const escrow = getAddress(AUTH_CAPTURE_ESCROW);
 
-    // Pin a consistent window per request
     const latest = await publicClient.getBlockNumber();
     const toBlock = latest;
     const fromBlock = toBlock - 5000n > 0n ? toBlock - 5000n : 0n;
 
-    // Query each event type with the same bounds
     const [authorized, charged, captured, refunded, voided, reclaimed] = await Promise.all([
-      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[0], fromBlock, toBlock }), // PaymentAuthorized
-      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[2], fromBlock, toBlock }), // PaymentCharged
-      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[1], fromBlock, toBlock }), // PaymentCaptured
-      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[3], fromBlock, toBlock }), // PaymentRefunded
-      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[4], fromBlock, toBlock }), // PaymentVoided
-      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[5], fromBlock, toBlock }), // PaymentReclaimed
+      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[0], fromBlock, toBlock }),
+      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[2], fromBlock, toBlock }),
+      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[1], fromBlock, toBlock }),
+      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[3], fromBlock, toBlock }),
+      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[4], fromBlock, toBlock }),
+      publicClient.getLogs({ address: escrow, event: ESCROW_EVENTS[5], fromBlock, toBlock }),
     ]);
 
     type Status = 'authorized' | 'captured' | 'charged' | 'refunded' | 'voided' | 'reclaimed';
@@ -64,9 +67,14 @@ export async function GET() {
       map.set(key, next);
     };
 
+    const includeBySalt = (s: any) => {
+      try { return BigInt(String(s)) >= minSalt; } catch { return false; }
+    };
+
     for (const log of authorized) {
       const { args } = log as any;
       const info = args.paymentInfo as any;
+      if (!includeBySalt(info.salt)) continue;
       upsert((args.paymentInfoHash as string), {
         salt: String(info.salt),
         payer: info.payer,
@@ -80,6 +88,7 @@ export async function GET() {
     for (const log of charged) {
       const { args } = log as any;
       const info = args.paymentInfo as any;
+      if (!includeBySalt(info.salt)) continue;
       upsert((args.paymentInfoHash as string), {
         salt: String(info.salt),
         payer: info.payer,
@@ -107,7 +116,6 @@ export async function GET() {
       upsert((args.paymentInfoHash as string), {}, 'reclaimed');
     }
 
-    // Deterministic sort: by numeric salt desc then hash
     const items = Array.from(map.values()).sort((a, b) => {
       const as = Number(a.salt ?? 0);
       const bs = Number(b.salt ?? 0);
@@ -115,7 +123,7 @@ export async function GET() {
       return (b.paymentInfoHash as string).localeCompare(a.paymentInfoHash as string);
     });
 
-    const payload = { items, window: { fromBlock: fromBlock.toString(), toBlock: toBlock.toString() } };
+    const payload = { items, window: { fromBlock: fromBlock.toString(), toBlock: toBlock.toString() }, minSalt: minSalt.toString() };
     __CACHE__ = { at: now, payload };
     return NextResponse.json(payload);
   } catch (e: any) {
