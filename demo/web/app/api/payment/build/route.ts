@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createPublicClient, http, getAddress } from 'viem';
 import { polygonAmoy } from 'viem/chains';
-import { ESCROW_ABI } from '@/lib/abi';
+import { ESCROW_ABI, ERC20_ABI } from '@/lib/abi';
 
 export async function POST() {
   try {
@@ -18,7 +18,9 @@ export async function POST() {
     const operator = getAddress(OPERATOR);
     const merchant = getAddress(MERCHANT);
 
-    const amount = 10n ** 16n;
+    // Use 0.01 with token decimals
+    const decimals = await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'decimals' }) as number;
+    const amount = (10n ** BigInt(decimals)) / 100n;
     const now = Math.floor(Date.now() / 1000);
 
     const paymentInfo = {
@@ -38,7 +40,19 @@ export async function POST() {
 
     const tokenStore = await publicClient.readContract({ address: escrow, abi: ESCROW_ABI, functionName: 'getTokenStore', args: [operator] });
 
-    return NextResponse.json({ paymentInfo, addresses: { escrow, token, operator, payer, merchant, tokenStore } });
+    // JSON-safe response (stringify BigInt/numbers)
+    const safePaymentInfo = {
+      ...paymentInfo,
+      maxAmount: paymentInfo.maxAmount.toString(),
+      preApprovalExpiry: paymentInfo.preApprovalExpiry.toString(),
+      authorizationExpiry: paymentInfo.authorizationExpiry.toString(),
+      refundExpiry: paymentInfo.refundExpiry.toString(),
+      minFeeBps: paymentInfo.minFeeBps.toString(),
+      maxFeeBps: paymentInfo.maxFeeBps.toString(),
+      salt: paymentInfo.salt.toString(),
+    };
+
+    return NextResponse.json({ paymentInfo: safePaymentInfo, addresses: { escrow, token, operator, payer, merchant, tokenStore }, decimals });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? 'build failed' }, { status: 500 });
   }

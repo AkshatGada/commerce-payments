@@ -153,6 +153,13 @@ export default function Dashboard() {
   const [opsLogs, setOpsLogs] = useState<OpsLog[]>([]);
   const appendLog = (l: OpsLog) => setOpsLogs((prev) => [l, ...prev].slice(0, 50));
 
+  const [loadingBuild, setLoadingBuild] = useState(false);
+  const [loadingCharge, setLoadingCharge] = useState(false);
+  const [loadingAuthCap, setLoadingAuthCap] = useState(false);
+  const [loadingRefund, setLoadingRefund] = useState(false);
+  const [loadingVoid, setLoadingVoid] = useState(false);
+  const [loadingReclaim, setLoadingReclaim] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
@@ -234,16 +241,19 @@ export default function Dashboard() {
   // Ops tab handlers
   const opBuild = async () => {
     try {
+      setLoadingBuild(true);
       const res = await fetch('/api/payment/build', { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'build failed');
       setOpsPaymentInfo(json.paymentInfo);
       toast.push({ kind: 'success', message: 'Built PaymentInfo' });
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+    finally { setLoadingBuild(false); }
   };
 
   const opCharge = async () => {
     try {
+      setLoadingCharge(true);
       const res = await fetch('/api/charge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amountDec: opsAmountDec }) });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'charge failed');
@@ -253,23 +263,29 @@ export default function Dashboard() {
       toast.push({ kind: 'success', message: 'Charge complete' });
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+    finally { setLoadingCharge(false); }
   };
 
   const opAuthorizeCapture = async () => {
     try {
+      setLoadingAuthCap(true);
       const res = await fetch('/api/authorize-capture', { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'authorize-capture failed');
       appendLog({ op: 'authorize', txHash: json.txs.authorizeHash, url: `${scanBase}/tx/${json.txs.authorizeHash}` });
       appendLog({ op: 'capture', txHash: json.txs.captureHash, url: `${scanBase}/tx/${json.txs.captureHash}` });
+      if (json.txs.approveHash) appendLog({ op: 'approve', txHash: json.txs.approveHash, url: `${scanBase}/tx/${json.txs.approveHash}` });
+      if (json.txs.preApproveHash) appendLog({ op: 'preApprove', txHash: json.txs.preApproveHash, url: `${scanBase}/tx/${json.txs.preApproveHash}` });
       toast.push({ kind: 'success', message: 'Authorize + Capture complete' });
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+    finally { setLoadingAuthCap(false); }
   };
 
   const opRefund = async () => {
     if (!opsPaymentInfo) return toast.push({ kind: 'error', message: 'Build or paste PaymentInfo first' });
     try {
+      setLoadingRefund(true);
       const decs = kpis?.tokenMeta?.decimals ?? 18;
       const amt = toUnits(opsAmountDec || '0.01', decs);
       const res = await fetch('/api/dashboard/refunds', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paymentInfo: opsPaymentInfo, amount: amt }) });
@@ -279,10 +295,12 @@ export default function Dashboard() {
       toast.push({ kind: 'success', message: 'Refund sent' });
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+    finally { setLoadingRefund(false); }
   };
 
   const opVoid = async () => {
     try {
+      setLoadingVoid(true);
       const res = await fetch('/api/void', { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'void failed');
@@ -290,10 +308,12 @@ export default function Dashboard() {
       toast.push({ kind: 'success', message: 'Void complete' });
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+    finally { setLoadingVoid(false); }
   };
 
   const opReclaim = async () => {
     try {
+      setLoadingReclaim(true);
       const res = await fetch('/api/reclaim', { method: 'POST' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'reclaim failed');
@@ -301,6 +321,7 @@ export default function Dashboard() {
       toast.push({ kind: 'success', message: 'Reclaim complete' });
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+    finally { setLoadingReclaim(false); }
   };
 
   // Dispute handlers (re-added)
@@ -664,7 +685,7 @@ export default function Dashboard() {
               <div className="font-semibold">Build Payment</div>
               <div className="text-xs text-gray-600 mb-2">Creates a fresh PaymentInfo using env addresses and current time.</div>
               <div className="flex gap-2">
-                <Button onClick={opBuild}>Build</Button>
+                <Button onClick={opBuild} disabled={loadingBuild}>{loadingBuild ? 'Building…' : 'Build'}</Button>
               </div>
             </Card>
             <Card>
@@ -672,13 +693,13 @@ export default function Dashboard() {
               <div className="text-xs text-gray-600 mb-2">One-step authorize + capture. Amount (decimals: {decs})</div>
               <div className="flex gap-2 items-center">
                 <input className="border rounded px-2 py-1 text-sm w-32" value={opsAmountDec} onChange={(e) => setOpsAmountDec(e.target.value)} />
-                <Button onClick={opCharge}>Run Charge</Button>
+                <Button onClick={opCharge} disabled={loadingCharge}>{loadingCharge ? 'Charging…' : 'Run Charge'}</Button>
               </div>
             </Card>
             <Card>
               <div className="font-semibold">Authorize + Capture</div>
               <div className="text-xs text-gray-600 mb-2">Runs two txs: authorize, then capture for the same amount.</div>
-              <Button onClick={opAuthorizeCapture}>Run Authorize + Capture</Button>
+              <Button onClick={opAuthorizeCapture} disabled={loadingAuthCap}>{loadingAuthCap ? 'Processing…' : 'Run Authorize + Capture'}</Button>
             </Card>
             <Card>
               <div className="font-semibold">Refund</div>
@@ -689,19 +710,19 @@ export default function Dashboard() {
                 }} />
                 <div className="flex gap-2 items-center">
                   <input className="border rounded px-2 py-1 text-sm w-32" value={opsAmountDec} onChange={(e) => setOpsAmountDec(e.target.value)} />
-                  <Button onClick={opRefund}>Run Refund</Button>
+                  <Button onClick={opRefund} disabled={loadingRefund}>{loadingRefund ? 'Refunding…' : 'Refund'}</Button>
                 </div>
               </div>
             </Card>
             <Card>
               <div className="font-semibold">Void</div>
               <div className="text-xs text-gray-600 mb-2">Returns uncaptured funds to payer. Uses demo env PaymentInfo.</div>
-              <Button onClick={opVoid}>Run Void</Button>
+              <Button onClick={opVoid} disabled={loadingVoid}>{loadingVoid ? 'Voiding…' : 'Void'}</Button>
             </Card>
             <Card>
               <div className="font-semibold">Reclaim</div>
               <div className="text-xs text-gray-600 mb-2">Payer-initiated void (after authorization expiry). Uses demo env PaymentInfo.</div>
-              <Button onClick={opReclaim}>Run Reclaim</Button>
+              <Button onClick={opReclaim} disabled={loadingReclaim}>{loadingReclaim ? 'Reclaiming…' : 'Reclaim'}</Button>
             </Card>
           </div>
 

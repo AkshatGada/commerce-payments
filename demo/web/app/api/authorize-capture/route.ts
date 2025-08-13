@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createPublicClient, createWalletClient, http, Hex, getAddress } from 'viem';
 import { polygonAmoy } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
-import { ERC20_ABI, ESCROW_ABI } from '@/lib/abi';
+import { ERC20_ABI, PREAPPROVAL_ABI, ESCROW_ABI } from '@/lib/abi';
 
 export async function POST() {
   try {
@@ -49,33 +49,26 @@ export async function POST() {
       salt: BigInt(now),
     } as const;
 
-    const tokenStore = await publicClient.readContract({ address: escrow, abi: ESCROW_ABI, functionName: 'getTokenStore', args: [operatorAccount.address] });
+    // Payer pre-approval flow
+    const payerNonceBase = await publicClient.getTransactionCount({ address: payer, blockTag: 'pending' });
+    const payerWallet = createWalletClient({ chain: polygonAmoy, transport: http(RPC_URL), account: privateKeyToAccount(normalizePk(process.env.PAYER_PRIVATE_KEY as string)) });
+    const approveHash = await payerWallet.writeContract({ address: token, abi: ERC20_ABI, functionName: 'approve', args: [preApprovalCollector, amount], nonce: payerNonceBase });
+    await publicClient.waitForTransactionReceipt({ hash: approveHash });
+    const preApproveHash = await payerWallet.writeContract({ address: preApprovalCollector, abi: PREAPPROVAL_ABI, functionName: 'preApprove', args: [paymentInfo], nonce: payerNonceBase + 1 });
+    await publicClient.waitForTransactionReceipt({ hash: preApproveHash });
 
-    const balancesBefore = {
-      payer: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [payer] })) as bigint,
-      merchant: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [merchant] })) as bigint,
-      tokenStore: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [tokenStore] })) as bigint,
-    };
-
+    // Operator authorize + capture
     const operatorNonceBase = await publicClient.getTransactionCount({ address: operatorAccount.address, blockTag: 'pending' });
-
     const authorizeHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'authorize', args: [paymentInfo, amount, preApprovalCollector, '0x'], nonce: operatorNonceBase });
     await publicClient.waitForTransactionReceipt({ hash: authorizeHash });
-
     const captureHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'capture', args: [paymentInfo, amount, 0, '0x0000000000000000000000000000000000000000'], nonce: operatorNonceBase + 1 });
     await publicClient.waitForTransactionReceipt({ hash: captureHash });
 
-    const balancesAfter = {
-      payer: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [payer] })) as bigint,
-      merchant: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [merchant] })) as bigint,
-      tokenStore: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [tokenStore] })) as bigint,
-    };
+    const tokenStore = await publicClient.readContract({ address: escrow, abi: ESCROW_ABI, functionName: 'getTokenStore', args: [operatorAccount.address] });
 
     return NextResponse.json({
       addresses: { escrow, token, operator: operatorAccount.address, payer, merchant, tokenStore },
-      txs: { authorizeHash, captureHash },
-      balancesBefore,
-      balancesAfter,
+      txs: { approveHash, preApproveHash, authorizeHash, captureHash },
     });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? 'authorize-capture failed' }, { status: 500 });
