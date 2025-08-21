@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { Button } from '../../components/ui/Button';
 import { useToast } from '../../components/ui/Toast';
 import { Modal } from '../../components/ui/Modal';
@@ -152,6 +152,9 @@ export default function Dashboard() {
   const [opsPaymentInfo, setOpsPaymentInfo] = useState<any | null>(null);
   const [opsLogs, setOpsLogs] = useState<OpsLog[]>([]);
   const appendLog = (l: OpsLog) => setOpsLogs((prev) => [l, ...prev].slice(0, 50));
+  // Authorization countdown state and timer ref
+  const [authSecondsLeft, setAuthSecondsLeft] = useState<number | null>(null);
+  const authTimerRef = useRef<number | null>(null);
 
   const [loadingBuild, setLoadingBuild] = useState(false);
   const [loadingCharge, setLoadingCharge] = useState(false);
@@ -296,6 +299,56 @@ export default function Dashboard() {
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
     finally { setLoadingAuth(false); }
+  };
+
+  // Auto-void when authorization expiry passes
+  useEffect(() => {
+    // clear any existing timer
+    if (authTimerRef.current) { window.clearInterval(authTimerRef.current); authTimerRef.current = null; }
+    setAuthSecondsLeft(null);
+    if (!opsPaymentInfo) return;
+    try {
+      const expiry = Number(opsPaymentInfo.authorizationExpiry || 0);
+      const now = Math.floor(Date.now() / 1000);
+      let secs = Math.max(0, expiry - now);
+      setAuthSecondsLeft(secs);
+      if (secs === 0) {
+        // already expired, trigger void immediately
+        (async () => { await triggerAutoVoid(); })();
+        return;
+      }
+      authTimerRef.current = window.setInterval(() => {
+        setAuthSecondsLeft((prev) => {
+          if (prev == null) return null;
+          if (prev <= 1) {
+            if (authTimerRef.current) { window.clearInterval(authTimerRef.current); authTimerRef.current = null; }
+            // expire and auto-void
+            (async () => { await triggerAutoVoid(); })();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch {
+      // ignore
+    }
+    return () => { if (authTimerRef.current) { window.clearInterval(authTimerRef.current); authTimerRef.current = null; } };
+  }, [opsPaymentInfo]);
+
+  const triggerAutoVoid = async () => {
+    if (!opsPaymentInfo) return;
+    try {
+      const res = await fetch('/api/void', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paymentInfo: opsPaymentInfo }) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'auto-void failed');
+      appendLog({ op: 'autoVoid', txHash: json.txs?.voidHash || '', url: `${scanBase}/tx/${json.txs?.voidHash || ''}` });
+      toast.push({ kind: 'info', message: 'Authorization expired — auto-void executed' });
+      // clear opsPaymentInfo and countdown
+      setOpsPaymentInfo(null);
+      setAuthSecondsLeft(null);
+    } catch (e: any) {
+      toast.push({ kind: 'error', message: `Auto-void failed: ${e.message}` });
+    }
   };
 
   const opCapture = async () => {
@@ -733,6 +786,9 @@ export default function Dashboard() {
               <div className="text-xs text-gray-600 mb-2">Run authorize only (short demo expiry).</div>
               <div className="flex gap-2 items-center">
                 <Button onClick={opAuthorize} disabled={loadingAuth}>{loadingAuth ? 'Authorizing…' : 'Authorize'}</Button>
+                {authSecondsLeft !== null && (
+                  <span className="text-xs text-gray-500 ml-2">({authSecondsLeft}s)</span>
+                )}
               </div>
             </Card>
             <Card>
