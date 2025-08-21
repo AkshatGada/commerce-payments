@@ -64,6 +64,15 @@ export async function POST(req: Request) {
       tokenStore: balancesBeforeRaw.tokenStore.toString(),
     };
 
+    // Compute paymentInfoHash and check current payment state to avoid voiding if nothing to void
+    const paymentInfoHash = await publicClient.readContract({ address: escrow, abi: ESCROW_ABI, functionName: 'getHash', args: [paymentInfo] }) as `0x${string}`;
+    const state = await publicClient.readContract({ address: escrow, abi: ESCROW_ABI, functionName: 'paymentState', args: [paymentInfoHash] }) as any;
+    const capturable = BigInt(state[1] || 0);
+    if (capturable === 0n) {
+      // Nothing to void — return no-op success so client won't show an error
+      return NextResponse.json({ status: 'no-op', message: 'No capturable funds; void skipped', paymentInfoHash });
+    }
+
     const opNonce = await publicClient.getTransactionCount({ address: operatorAccount.address, blockTag: 'pending' });
     const voidHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'void', args: [paymentInfo], nonce: opNonce });
     await publicClient.waitForTransactionReceipt({ hash: voidHash });
