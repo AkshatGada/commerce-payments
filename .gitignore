@@ -13,3 +13,8 @@ broadcast
 
 # VSCode
 .vscode/
+
+# Internal docs (local-only)
+demo/payments-foxes.md
+demo/issues.md
+demo/plan.md

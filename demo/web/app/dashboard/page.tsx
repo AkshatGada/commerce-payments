@@ -260,6 +260,11 @@ export default function Dashboard() {
       appendLog({ op: 'approve', txHash: json.txs.approveHash, url: `${scanBase}/tx/${json.txs.approveHash}` });
       appendLog({ op: 'preApprove', txHash: json.txs.preApproveHash, url: `${scanBase}/tx/${json.txs.preApproveHash}` });
       appendLog({ op: 'charge', txHash: json.txs.chargeHash, url: `${scanBase}/tx/${json.txs.chargeHash}` });
+      // Capture server-created paymentInfo so user can refund it if needed
+      if (json.paymentInfo) {
+        setOpsPaymentInfo(json.paymentInfo);
+        appendLog({ op: 'paymentInfo', txHash: '', url: '', meta: { paymentInfo: json.paymentInfo } });
+      }
       toast.push({ kind: 'success', message: 'Charge complete' });
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }

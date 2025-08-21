@@ -74,11 +74,27 @@ export async function POST(req: Request) {
     const amt = BigInt(amount);
     const collector = getAddress(tokenCollector ?? OPERATOR_REFUND_COLLECTOR);
 
-    const nonce = await publicClient.getTransactionCount({ address: operator.address, blockTag: 'pending' });
-    const refundHash = await wallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'refund', args: [paymentInfo, amt, collector, '0x'], nonce });
-    await publicClient.waitForTransactionReceipt({ hash: refundHash });
+    // Ensure operator has approved the refund collector to pull operator funds (OperatorRefundCollector uses transferFrom)
+    try {
+      const currentAllowance = await publicClient.readContract({ address: paymentInfo.token, abi: ERC20_ABI, functionName: 'allowance', args: [operator.address, collector] }) as bigint;
+      const operatorBalance = await publicClient.readContract({ address: paymentInfo.token, abi: ERC20_ABI, functionName: 'balanceOf', args: [operator.address] }) as bigint;
+      if (operatorBalance < amt) {
+        return NextResponse.json({ error: `Operator balance ${operatorBalance.toString()} is less than refund amount ${amt.toString()}. Fund the OPERATOR address or provide MERCHANT_PRIVATE_KEY for merchant-funded refunds.` }, { status: 400 });
+      }
+      const nonceBig = await publicClient.getTransactionCount({ address: operator.address, blockTag: 'pending' });
+      let txNonceNum = Number(nonceBig);
+      if (currentAllowance < amt) {
+        const approveHash = await wallet.writeContract({ address: paymentInfo.token, abi: ERC20_ABI, functionName: 'approve', args: [collector, amt], nonce: txNonceNum });
+        await publicClient.waitForTransactionReceipt({ hash: approveHash });
+        txNonceNum = txNonceNum + 1;
+      }
 
-    return NextResponse.json({ txs: { refundHash } });
+      const refundHash = await wallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'refund', args: [paymentInfo, amt, collector, '0x'], nonce: txNonceNum });
+      await publicClient.waitForTransactionReceipt({ hash: refundHash });
+      return NextResponse.json({ txs: { refundHash } });
+    } catch (err) {
+      throw err;
+    }
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? 'failed' }, { status: 500 });
   }

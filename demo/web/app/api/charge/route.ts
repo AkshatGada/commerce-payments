@@ -85,7 +85,19 @@ export async function POST(req: Request) {
     const chargeHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'charge', args: [paymentInfo, amount, preApprovalCollector, '0x', 0, '0x0000000000000000000000000000000000000000'], nonce: operatorNonceBase });
     await publicClient.waitForTransactionReceipt({ hash: chargeHash });
 
-    return NextResponse.json({ txs: { approveHash, preApproveHash, chargeHash }, amount: amount.toString() });
+    // Return paymentInfo in JSON-safe form so UI can reuse it for refunds
+    const safePaymentInfo = {
+      ...paymentInfo,
+      maxAmount: paymentInfo.maxAmount.toString(),
+      preApprovalExpiry: paymentInfo.preApprovalExpiry.toString(),
+      authorizationExpiry: paymentInfo.authorizationExpiry.toString(),
+      refundExpiry: paymentInfo.refundExpiry.toString(),
+      minFeeBps: paymentInfo.minFeeBps.toString(),
+      maxFeeBps: paymentInfo.maxFeeBps.toString(),
+      salt: paymentInfo.salt.toString(),
+    } as const;
+
+    return NextResponse.json({ txs: { approveHash, preApproveHash, chargeHash }, amount: amount.toString(), paymentInfo: safePaymentInfo });
   } catch (e: any) {
     return NextResponse.json({ error: e.message ?? 'charge failed' }, { status: 500 });
   }
