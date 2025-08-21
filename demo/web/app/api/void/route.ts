@@ -53,20 +53,30 @@ export async function POST(req: Request) {
 
     const tokenStore = await publicClient.readContract({ address: escrow, abi: ESCROW_ABI, functionName: 'getTokenStore', args: [operatorAccount.address] });
 
-    const balancesBefore = {
+    const balancesBeforeRaw = {
       payer: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [payer] })) as bigint,
       merchant: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [merchant] })) as bigint,
       tokenStore: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [tokenStore] })) as bigint,
+    };
+    const balancesBefore = {
+      payer: balancesBeforeRaw.payer.toString(),
+      merchant: balancesBeforeRaw.merchant.toString(),
+      tokenStore: balancesBeforeRaw.tokenStore.toString(),
     };
 
     const opNonce = await publicClient.getTransactionCount({ address: operatorAccount.address, blockTag: 'pending' });
     const voidHash = await operatorWallet.writeContract({ address: escrow, abi: ESCROW_ABI, functionName: 'void', args: [paymentInfo], nonce: opNonce });
     await publicClient.waitForTransactionReceipt({ hash: voidHash });
 
-    const balancesAfter = {
+    const balancesAfterRaw = {
       payer: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [payer] })) as bigint,
       merchant: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [merchant] })) as bigint,
       tokenStore: (await publicClient.readContract({ address: token, abi: ERC20_ABI, functionName: 'balanceOf', args: [tokenStore] })) as bigint,
+    };
+    const balancesAfter = {
+      payer: balancesAfterRaw.payer.toString(),
+      merchant: balancesAfterRaw.merchant.toString(),
+      tokenStore: balancesAfterRaw.tokenStore.toString(),
     };
 
     return NextResponse.json({ addresses: { escrow, token, operator: operatorAccount.address, payer, merchant, tokenStore }, txs: { voidHash }, balancesBefore, balancesAfter });
