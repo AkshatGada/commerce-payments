@@ -156,6 +156,8 @@ export default function Dashboard() {
   const [loadingBuild, setLoadingBuild] = useState(false);
   const [loadingCharge, setLoadingCharge] = useState(false);
   const [loadingAuthCap, setLoadingAuthCap] = useState(false);
+  const [loadingAuth, setLoadingAuth] = useState(false);
+  const [loadingCapture, setLoadingCapture] = useState(false);
   const [loadingRefund, setLoadingRefund] = useState(false);
   const [loadingVoid, setLoadingVoid] = useState(false);
   const [loadingReclaim, setLoadingReclaim] = useState(false);
@@ -271,20 +273,33 @@ export default function Dashboard() {
     finally { setLoadingCharge(false); }
   };
 
-  const opAuthorizeCapture = async () => {
+  const opAuthorize = async () => {
     try {
-      setLoadingAuthCap(true);
-      const res = await fetch('/api/authorize-capture', { method: 'POST' });
+      setLoadingAuth(true);
+      const res = await fetch('/api/authorize', { method: 'POST' });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'authorize-capture failed');
+      if (!res.ok) throw new Error(json.error || 'authorize failed');
       appendLog({ op: 'authorize', txHash: json.txs.authorizeHash, url: `${scanBase}/tx/${json.txs.authorizeHash}` });
-      appendLog({ op: 'capture', txHash: json.txs.captureHash, url: `${scanBase}/tx/${json.txs.captureHash}` });
-      if (json.txs.approveHash) appendLog({ op: 'approve', txHash: json.txs.approveHash, url: `${scanBase}/tx/${json.txs.approveHash}` });
-      if (json.txs.preApproveHash) appendLog({ op: 'preApprove', txHash: json.txs.preApproveHash, url: `${scanBase}/tx/${json.txs.preApproveHash}` });
-      toast.push({ kind: 'success', message: 'Authorize + Capture complete' });
+      toast.push({ kind: 'success', message: 'Authorize complete' });
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
-    finally { setLoadingAuthCap(false); }
+    finally { setLoadingAuth(false); }
+  };
+
+  const opCapture = async () => {
+    if (!opsPaymentInfo) return toast.push({ kind: 'error', message: 'Build or paste PaymentInfo first' });
+    try {
+      setLoadingCapture(true);
+      const decs = kpis?.tokenMeta?.decimals ?? 18;
+      const amt = toUnits(opsAmountDec || '0.01', decs);
+      const res = await fetch('/api/capture', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paymentInfo: opsPaymentInfo, amount: amt }) });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'capture failed');
+      appendLog({ op: 'capture', txHash: json.txs.captureHash, url: `${scanBase}/tx/${json.txs.captureHash}` });
+      toast.push({ kind: 'success', message: 'Capture complete' });
+      await refreshKpis();
+    } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
+    finally { setLoadingCapture(false); }
   };
 
   const opRefund = async () => {
@@ -702,9 +717,19 @@ export default function Dashboard() {
               </div>
             </Card>
             <Card>
-              <div className="font-semibold">Authorize + Capture</div>
-              <div className="text-xs text-gray-600 mb-2">Runs two txs: authorize, then capture for the same amount.</div>
-              <Button onClick={opAuthorizeCapture} disabled={loadingAuthCap}>{loadingAuthCap ? 'Processing…' : 'Run Authorize + Capture'}</Button>
+              <div className="font-semibold">Authorize</div>
+              <div className="text-xs text-gray-600 mb-2">Run authorize only (short demo expiry).</div>
+              <div className="flex gap-2 items-center">
+                <Button onClick={opAuthorize} disabled={loadingAuth}>{loadingAuth ? 'Authorizing…' : 'Authorize'}</Button>
+              </div>
+            </Card>
+            <Card>
+              <div className="font-semibold">Capture</div>
+              <div className="text-xs text-gray-600 mb-2">Capture previously authorized funds for provided PaymentInfo/amount.</div>
+              <div className="flex gap-2 items-center">
+                <input className="border rounded px-2 py-1 text-sm w-32" value={opsAmountDec} onChange={(e) => setOpsAmountDec(e.target.value)} />
+                <Button onClick={opCapture} disabled={loadingCapture}>{loadingCapture ? 'Capturing…' : 'Capture'}</Button>
+              </div>
             </Card>
             <Card>
               <div className="font-semibold">Refund</div>
