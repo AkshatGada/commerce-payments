@@ -280,6 +280,18 @@ export default function Dashboard() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'authorize failed');
       appendLog({ op: 'authorize', txHash: json.txs.authorizeHash, url: `${scanBase}/tx/${json.txs.authorizeHash}` });
+      // Capture server-created paymentInfo so capture can run without manual paste
+      if (json.paymentInfo) {
+        setOpsPaymentInfo(json.paymentInfo);
+        try {
+          const decs = kpis?.tokenMeta?.decimals ?? 18;
+          const amt = json.paymentInfo.maxAmount ? (Number(BigInt(json.paymentInfo.maxAmount)) / Number(10n ** BigInt(decs))).toString() : opsAmountDec;
+          setOpsAmountDec(amt);
+        } catch {
+          // ignore conversion errors
+        }
+        appendLog({ op: 'paymentInfo', txHash: '', url: '', meta: { paymentInfo: json.paymentInfo } });
+      }
       toast.push({ kind: 'success', message: 'Authorize complete' });
       await refreshKpis();
     } catch (e: any) { toast.push({ kind: 'error', message: e.message }); }
